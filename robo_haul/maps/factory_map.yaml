@@ -1,0 +1,17 @@
+# image: factory_map.pgm
+# mode: trinary
+# resolution: 0.05
+# origin: [0.0, 0.0, 0.0]
+# negate: 0
+# occupied_thresh: 0.65
+# free_thresh: 0.25
+
+
+
+
+image: factory_map.pgm
+resolution: 0.05
+origin: [-6.925, -5.9, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
