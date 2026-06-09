@@ -8,6 +8,7 @@ from PIL import Image
 
 from scipy.ndimage import binary_erosion
 
+
 class AStarPlanner:
     
     def __init__(self , map_yaml):
@@ -41,149 +42,165 @@ class AStarPlanner:
 
     def bos_mu(self ,gx, gy ):
 
-        if gx<0 or gy<0 or gx>=self.yukseklik or gy>=self.genislik :
+        if gx<0 or gy<0 or gx>=self.genislik or gy>=self.yukseklik :
             return False
         
         return bool(self.bos_harita[gy,gx])
-
-    def esnetilmis_bos_mu(self, hücre_x, hücre_y, genisletme_boyutu=4):
-        """Sadece hedef için — Eğer hedef duvara yakınsa daha küçük bir genisletme_boyutu kullanılır"""
-        if hücre_x < 0 or hücre_y < 0 or hücre_x >= self.genislik or hücre_y >= self.yukseklik:
+    
+    
+    def hedef_alani_uygun_mu (self , gx,gy, genisletme_boyutu=4):
+        # Sınır dışı kontrolü
+        if gx < 0 or gy < 0 or gx >= self.genislik or gy >= self.yukseklik:
             return False
-        for degisim_x in range(-genisletme_boyutu, genisletme_boyutu + 1):
-            for degisim_y in range(-genisletme_boyutu, genisletme_boyutu + 1):
-                komsu_x, komsu_y = hücre_x + degisim_x, hücre_y + degisim_y
-                if komsu_x < 0 or komsu_y < 0 or komsu_x >= self.genislik or komsu_y >= self.yukseklik:
+        
+        for dx in range(-genisletme_boyutu, genisletme_boyutu + 1):
+            for dy in range(-genisletme_boyutu, genisletme_boyutu + 1):
+                nx, ny = gx + dx, gy + dy
+                
+                if nx < 0 or ny < 0 or nx >= self.genislik or ny >= self.yukseklik:
                     return False
-                if self.grid[komsu_y, komsu_x] < self.bos_esik_degeri:
+                if self.grid[ny, nx] < self.bos_esik_degeri:
                     return False
         return True
     
-    def dunya_to_harita(self, dunya_x, dunya_y):
-        hucre_x = int((dunya_x - self.orjin_x) / self.resolution)
-        hucre_y = int((dunya_y - self.orjin_y) / self.resolution)
-        return hucre_x, hucre_y
+    def world_to_grid(self, wx, wy):
+        gx = int((wx - self.orjin_x) / self.resolution)
+        gy = int((wy - self.orjin_y) / self.resolution)
+        return gx, gy
 
-    def harita_to_dunya(self, hucre_x, hucre_y):
-        dunya_x = self.orjin_x + (hucre_x + 0.5) * self.resolution
-        dunya_y = self.orjin_y + (hucre_y + 0.5) * self.resolution
-        return dunya_x, dunya_y
+    def grid_to_world(self, gx, gy):
+        wx = self.orjin_x + (gx + 0.5) * self.resolution
+        wy = self.orjin_y + (gy + 0.5) * self.resolution
+        return wx, wy
 
-    def sezgisel_maliyet(self, nokta_a, nokta_b):
-        return math.sqrt((nokta_a[0] - nokta_b[0]) ** 2 + (nokta_a[1] - nokta_b[1]) ** 2)
+    def heuristic(self, a, b):
+        return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
     
-    def en_yakin_bos_hedefi_bul(self, dunya_x, dunya_y, maks_yari_cap_m=3.0):
 
-        hedef_hucre = self.dunya_to_harita(dunya_x, dunya_y)
+    def en_yakin_guvenli_hedefi_bul(self, hedef_x, hedef_y, maX_yaricap_m=3.0):
+        
+        hedef_grid = self.world_to_grid(hedef_x, hedef_y)
 
-        # Maksimum mesafeyi hücre sayısına dönüştür
-        maks_yari_cap_hucre = int(maks_yari_cap_m / self.resolution)
+        max_yaricap_grid = int(maX_yaricap_m / self.resolution)
 
-        # 1 hücre yarıçaptan başlayarak dışarıya doğru genişle
-        for yari_cap in range(1, maks_yari_cap_hucre + 1):
-
+        # Hedefin çevresini yarıçapı 1'den başlayarak adım adım tara
+        for yaricap in range(1, max_yaricap_grid + 1):
             adaylar = []
 
-            # Mevcut çemberin çevresindeki tüm hücreleri tara
-            for degisim_x in range(-yari_cap, yari_cap + 1):
-                for degisim_y in range(-yari_cap, yari_cap + 1):
+            # Daire üzerindeki noktaları kontrol et
+            for dx in range(-yaricap, yaricap + 1):
+                for dy in range(-yaricap, yaricap + 1):
 
-                    # Sadece çemberin en dış sınırındaki hücreleri al (iç kısmı atla)
-                    if abs(degisim_x) != yari_cap and abs(degisim_y) != yari_cap:
+                    # Sadece dairenin 'çevresindeki' hücreleri tara (içini tarayıp vakit kaybetme)
+                    if abs(dx) != yaricap and abs(dy) != yaricap:
                         continue
 
-                    komsu_x = hedef_hucre[0] + degisim_x
-                    komsu_y = hedef_hucre[1] + degisim_y
+                    nx = hedef_grid[0] + dx
+                    ny = hedef_grid[1] + dy
 
-                    if self.bos_mu(komsu_x, komsu_y):
-                        mesafe = math.sqrt(degisim_x * degisim_x + degisim_y * degisim_y)
-                        adaylar.append((mesafe, komsu_x, komsu_y))
+                    # Hücre güvenli mi?
+                    if self.bos_mu(nx, ny):
+                        mesafe = math.sqrt(dx**2 + dy**2)
+                        adaylar.append((mesafe, nx, ny))
 
+            # Eğer bu yarıçapta uygun hücreler bulduysak, en yakın olanı seç
             if adaylar:
-                # Bu çember üzerindeki en yakın boş noktayı seç
-                adaylar.sort()
-                _, en_iyi_x, en_iyi_y = adaylar[0]
-                dunya_sonuc_x, dunya_sonuc_y = self.harita_to_dunya(en_iyi_x, en_iyi_y)
-                return dunya_sonuc_x, dunya_sonuc_y
-
-        # Belirtilen maks_yari_cap_m içinde hiçbir boş nokta bulunamadı
+                adaylar.sort() # Mesafeye göre küçükten büyüğe sırala
+                _, en_yakin_x, en_yakin_y = adaylar[0]
+                
+                # Seçilen grid noktasını dünya koordinatına çevir ve döndür
+                dunya_x, dunya_y = self.grid_to_world(en_yakin_x, en_yakin_y)
+                return dunya_x, dunya_y
+        
+        # Maksimum arama mesafesi içerisinde hiç güvenli nokta bulunamadıysa
         return None
     
-    def planla(self, baslangic_x, baslangic_y, hedef_x, hedef_y, maks_yedek_mesafe_m=3.0):
 
-        baslangic_hucre = self.dunya_to_harita(baslangic_x, baslangic_y)
-        hedef_hucre     = self.dunya_to_harita(hedef_x, hedef_y)
+    def plan(self, baslangic_x, baslangic_y, hedef_x, hedef_y, max_geri_donus_m=3.0):
+        
+        baslangic = self.world_to_grid(baslangic_x, baslangic_y)
+        hedef = self.world_to_grid(hedef_x, hedef_y)
 
-        #  1 Kademeli Genişletme (Inflate) Değerleri ile Orijinal Hedef 
-        for hedef_genisletme in [8, 4, 2, 0]:
-            sonuc = self._astar(baslangic_hucre, hedef_hucre, hedef_genisletme)
+
+        for sisirme_payi in [8, 4, 2, 0]:
+            sonuc = self._astar(baslangic, hedef, sisirme_payi)
             if sonuc is not None:
                 return sonuc, (hedef_x, hedef_y)
+            
+        alternatif_hedef = self.en_yakin_guvenli_hedefi_bul(hedef_x, hedef_y, max_geri_donus_m)
 
-        #  2 Genişleyen Çemberlerle Alternatif Nokta Arama 
-        yedek_hedef = self.en_yakin_bos_hedefi_bul(hedef_x, hedef_y, maks_yari_cap_m=maks_yedek_mesafe_m)
+        if alternatif_hedef is None:
+            return None, None # Hiçbir şekilde gidilecek nokta yok
+        
+        # 3. Adım: Bulunan alternatif güvenli hedefe rota planla
+        alt_hx, alt_hy = alternatif_hedef
+        alt_hedef_grid = self.world_to_grid(alt_hx, alt_hy)
 
-        if yedek_hedef is None:
-            return None, None
-
-        yedek_x, yedek_y    = yedek_hedef
-        yedek_hedef_hucre   = self.dunya_to_harita(yedek_x, yedek_y)
-
-        for hedef_genisletme in [4, 2, 0]:
-            sonuc = self._astar(baslangic_hucre, yedek_hedef_hucre, hedef_genisletme)
+        for sisirme_payi in [4, 2, 0]:
+            sonuc = self._astar(baslangic, alt_hedef_grid, sisirme_payi)
             if sonuc is not None:
-                return sonuc, (yedek_x, yedek_y)
-
+                return sonuc, (alt_hx, alt_hy)
+            
         return None, None
     
 
-    def _astar(self, baslangic, hedef, hedef_genisletme):
 
-        if hedef_genisletme == 0:
+
+
+    def _astar(self, baslangic, hedef, hedef_sisirme):
+        
+
+        # 1. Adım: Hedef noktası harita sınırları içinde mi ve güvenli mi?
+        if hedef_sisirme == 0:
             if not (0 <= hedef[0] < self.genislik and 0 <= hedef[1] < self.yukseklik):
                 return None
+            
         else:
-            if not self.esnetilmis_bos_mu(*hedef, genisletme_boyutu=hedef_genisletme):
+            if not self.hedef_alani_uygun_mu(*hedef, genisletme_boyutu=hedef_sisirme):
                 return None
+            
+        # 2. Adım: Arama için hazırlık (Açık liste ve öncelik kuyruğu)
+        open_set = []
+        heapq.heappush(open_set, (0, baslangic)) # (F-skoru, koordinat)
+        gelinen_noktalar = {} # Yolu geri sürmek için (parent map)
+        g_skoru = {baslangic: 0} # Başlangıçtan mevcut noktaya olan maliyet
 
-        acik_liste = []
-        heapq.heappush(acik_liste, (0, baslangic))
-        gelinen_yer = {}
-        g_skoru     = {baslangic: 0}
-
-        # Robotun hareket edebileceği 8 yön (Yatay, Dikey ve Çaprazlar)
+        # 8 yönlü hareket (Sağ, Sol, Yukarı, Aşağı ve çaprazlar)
         komsular = [
-            (1,  0), (-1,  0), (0,  1), (0, -1),
-            (1,  1), (1,  -1), (-1, 1), (-1, -1)
+            (1, 0), (-1, 0), (0, 1), (0, -1),
+            (1, 1), (1, -1), (-1, 1), (-1, -1)
         ]
 
-        while acik_liste:
+        # 3. Adım: Ana döngü (Arama)
+        while open_set:
+            _, suanki = heapq.heappop(open_set)
 
-            _, mevcut_hucre = heapq.heappop(acik_liste)
+            # Hedefe yeterince yaklaştıysak (Öklid mesafesi < 2 birim)
+            if self.heuristic(suanki, hedef) < 2:
+                rota = []
+                while suanki in gelinen_noktalar:
+                    rota.append(self.grid_to_world(*suanki))
+                    suanki = gelinen_noktalar[suanki]
+                rota.reverse()
+                return rota
 
-            # Hedefe yeterince yaklaşıldıysa (Mesafe 2 hücreden azsa) yolu geri sararak oluştur
-            if self.sezgisel_maliyet(mevcut_hucre, hedef) < 2:
-                yol = []
-                while mevcut_hucre in gelinen_yer:
-                    yol.append(self.harita_to_dunya(*mevcut_hucre))
-                    mevcut_hucre = gelinen_yer[mevcut_hucre]
-                yol.reverse()
-                return yol
+            # 4. Adım: Komşu hücreleri değerlendir
+            for dx, dy in komsular:
+                komsu = (suanki[0] + dx, suanki[1] + dy)
 
-            for degisim_x, degisim_y in komsular:
-                komsu_hucre = (mevcut_hucre[0] + degisim_x, mevcut_hucre[1] + degisim_y)
-
-                if not self.bos_mu(*komsu_hucre):
+                # Engel kontrolü
+                if not self.bos_mu(*komsu):
                     continue
 
-                hareket_maliyeti = math.sqrt(degisim_x * degisim_x + degisim_y * degisim_y)
-                yeni_g_skoru = g_skoru[mevcut_hucre] + hareket_maliyeti
+                # Maliyet hesabı: g(n) + adım maliyeti
+                hareket_maliyeti = math.sqrt(dx**2 + dy**2)
+                yeni_g = g_skoru[suanki] + hareket_maliyeti
 
-                if yeni_g_skoru < g_skoru.get(komsu_hucre, 999999):
-                    g_skoru[komsu_hucre]  = yeni_g_skoru
-                    gelinen_yer[komsu_hucre] = mevcut_hucre
-                    f_skoru = yeni_g_skoru + self.sezgisel_maliyet(komsu_hucre, hedef)
-                    heapq.heappush(acik_liste, (f_skoru, komsu_hucre))
+                # Daha kısa bir yol bulunduysa güncelle
+                if yeni_g < g_skoru.get(komsu, float('inf')):
+                    gelinen_noktalar[komsu] = suanki
+                    g_skoru[komsu] = yeni_g
+                    f = yeni_g + self.heuristic(komsu, hedef) # F = g + h
+                    heapq.heappush(open_set, (f, komsu))
 
         return None
-    
