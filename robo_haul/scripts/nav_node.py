@@ -38,7 +38,7 @@ class NavNode(Node):
         self.mevcut_hedef_nokta = 0
         self.active = False
 
-        # ── Navigasyon Parametreleri (Ayarlar) ────────────────
+        #  Navigasyon Parametreleri (Ayarlar) 
         self.GUVENLI_MESAFE  = 0.55   # Engellerden uzak durma mesafesi (metre)
         self.ILERI_HIZ       = 0.45   # Düz gitme hızı (m/s)
         self.DONUS_HIZI      = 1.0    # Dönüş hızı (rad/s)
@@ -66,7 +66,7 @@ class NavNode(Node):
         self.mevcut_hedef_nokta =0
         self.active =True
 
-        # ── الجزء الجديد لنشر المسار لـ RViz ───────────────────
+        #  الجزء الجديد لنشر المسار لـ RViz 
         path_msg = Path()
         path_msg.header.frame_id = 'odom'  # الـ frame الأساسي لخريطتك
         path_msg.header.stamp = self.get_clock().now().to_msg()
