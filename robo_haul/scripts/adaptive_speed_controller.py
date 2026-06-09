@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import math
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
@@ -7,108 +7,109 @@ from sensor_msgs.msg import LaserScan
 
 from sensor_handler import SensorHandler
 
-#  Mesafe eşikleri (metre) 
-DANGER_DIST  = 0.35   # Bu değerin altında → anında dur
-SLOW_DIST    = 0.70   # Bu değerin altında → yavaş hız
-MEDIUM_DIST  = 1.20   # Bu değerin altında → orta hız
-CLEAR_DIST   = 2.00   # Bu değerin üstünde → maksimum hız
+# ─── Mesafe Ayarları (Metre) ──────────────────────────────────
+TEHLIKE_MESAFESI = 0.35   # Bu mesafeden azsa → Anında dur
+YAVAS_MESAFE     = 0.70   # Bu mesafeden azsa → Yavaş hız
+ORTA_MESAFE      = 1.20   # Bu mesafeden azsa → Orta hız
+ACIK_MESAFE      = 2.00   # Bu mesafeden büyükse → Maksimum hız
 
-#  Hız oranları (0.0 ile 1.0 arasında) 
-SPEED_STOP   = 0.0    # Tehlike
-SPEED_SLOW   = 0.25   # Yavaş
-SPEED_MEDIUM = 0.60   # Orta
-SPEED_FULL   = 1.00   # Tam hız
+# ─── Hız Limitleri (0.0 ile 1.0 arası oran) ──────────────────
+HIZ_DUR          = 0.0    # Tehlike
+HIZ_YAVAS        = 0.25   # Yavaş
+HIZ_ORTA         = 0.60   # Orta
+HIZ_TAM          = 1.00   # Tam hız
 
-#  Hız yumuşatma 
-ALPHA = 0.3   # Küçüldükçe geçiş daha yavaş ve yumuşak olur (0.1–0.5)
-
+ALPHA = 0.3
 
 class AdaptiveSpeedController(Node):
-
+    
     def __init__(self):
         super().__init__('adaptive_speed_controller')
 
-        #  Sensör işleyici 
         self.sensors = SensorHandler()
 
-        self.create_subscription(LaserScan, '/scan',        self.sensors.scan_callback,  10)
-        self.create_subscription(Twist,     '/cmd_vel_nav', self.nav_cmd_callback, 10)
+        self.create_subscription(LaserScan , '/scan', self.sensors.scan_callback , 10)
+        self.count_subscribers(Twist , '/cmd_vel_nav' , self.nav_cmd_callback , 10)
 
-        #  Yayıncı → Robot 
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.count_publishers(Twist , '/cmd_vel' , 10)
 
-        #  İç durum değişkenleri 
-        self.current_speed_ratio = 1.0
-        self.target_speed_ratio  = 1.0
-        self.last_nav_cmd        = Twist()
+        self.mevcut_hiz_orani = 1.0
+        self.hedef_hiz_orani = 1.0
+        self.son_nav_cmd = Twist()
 
-        #  Zamanlayıcı: düzenli aralıklarla komut gönder (20 Hz) 
-        self.create_timer(0.05, self.publish_cmd)
+        self.create_timer(0.05 , self.publish_cmd)
 
-        self.get_logger().info("Uyarlanabilir Hız Kontrolcüsü başlatıldı")
+        self.get_logger().info("Adaptif Hız Kontrolörü Başlatıldı")
         self.get_logger().info(
-            f"   Tehlike={DANGER_DIST}m  Yavaş={SLOW_DIST}m  "
-            f"Orta={MEDIUM_DIST}m  Açık={CLEAR_DIST}m"
+            f"   Tehlike={TEHLIKE_MESAFESI}m  Yavaş={YAVAS_MESAFE}m  "
+            f"Orta={ORTA_MESAFE}m  Açık={ACIK_MESAFE}m"
         )
 
-    def nav_cmd_callback(self, msg: Twist):
-        self.last_nav_cmd = msg
 
-    def _distance_to_ratio(self, dist: float) -> float:
-        if dist <= DANGER_DIST:
-            return SPEED_STOP
+    def nav_cmd_callback(self , msg:Twist):
 
-        elif dist <= SLOW_DIST:
-            t = (dist - DANGER_DIST) / (SLOW_DIST - DANGER_DIST)
-            return SPEED_STOP + t * (SPEED_SLOW - SPEED_STOP)
+        # 1- Navigasyon düğümünden gelen hareket komutunu (Twist) kaydet
+        self.son_nav_cmd = msg
 
-        elif dist <= MEDIUM_DIST:
-            t = (dist - SLOW_DIST) / (MEDIUM_DIST - SLOW_DIST)
-            return SPEED_SLOW + t * (SPEED_MEDIUM - SPEED_SLOW)
+        # 2- Sensör yöneticisinden (SensorHandler) güncel ön mesafe bilgisini oku
+        mesafe = self.sensors.on_mesafe
+        
+        # 3- Okunan bu mesafeyi, doğrusal interpolasyon fonksiyonunu kullanarak hız oranına dönüştür
+        oran = self.__mesafeyi_orana_donustur(mesafe)
 
-        elif dist <= CLEAR_DIST:
-            t = (dist - MEDIUM_DIST) / (CLEAR_DIST - MEDIUM_DIST)
-            return SPEED_MEDIUM + t * (SPEED_FULL - SPEED_MEDIUM)
+        # 4- Hesaplanan bu oranı, yumuşatma (smoothing) adımında kullanılmak üzere hedef hız oranı olarak kaydet
+        self.hedef_hiz_orani = oran
+
+    
+    def __mesafeyi_orana_donustur(self , mesafe:float):
+        
+        if mesafe <= TEHLIKE_MESAFESI :
+            return HIZ_DUR
+        
+        elif mesafe <=YAVAS_MESAFE:
+            t = (mesafe -TEHLIKE_MESAFESI) / (YAVAS_MESAFE - TEHLIKE_MESAFESI)
+            return HIZ_DUR + t * (HIZ_YAVAS - HIZ_DUR)
+
+        elif mesafe <= ORTA_MESAFE:
+            t = (mesafe - YAVAS_MESAFE) / (ORTA_MESAFE - YAVAS_MESAFE)
+            return HIZ_YAVAS + t * (HIZ_ORTA - HIZ_YAVAS)
+
+        elif mesafe <= ACIK_MESAFE:
+            t = (mesafe - ORTA_MESAFE) / (ACIK_MESAFE - ORTA_MESAFE)
+            return HIZ_ORTA + t * (HIZ_TAM - HIZ_ORTA)
 
         else:
-            return SPEED_FULL
+            return HIZ_TAM
+        
+    
+    def publish_cmd(self) : 
+        
+        self.hedef_hiz_orani += ALPHA * (self.hedef_hiz_orani - self.mevcut_hiz_orani)
 
-    def _get_zone(self) -> str:
-        d = self.sensors.on_mesafe
-        if   d <= DANGER_DIST:  return "TEHLİKE"
-        elif d <= SLOW_DIST:    return "YAVAŞ  "
-        elif d <= MEDIUM_DIST:  return "ORTA   "
-        else:                   return "AÇIK   "
+        yeni_hiz_mesaji = Twist()
+        yeni_hiz_mesaji.linear.z = self.son_nav_cmd.linear.z
+        original_linear = self.son_nav_cmd.linear.x
 
-    def publish_cmd(self):
-        self.target_speed_ratio = self._distance_to_ratio(self.sensors.on_mesafe)
+        if self.mevcut_hiz_orani <= 0.01 :
+            yeni_hiz_mesaji.linear.x = 0.0
 
-        # Yumuşatma: hedefe doğru kademeli geçiş
-        self.current_speed_ratio += ALPHA * (
-            self.target_speed_ratio - self.current_speed_ratio
-        )
-
-        modified           = Twist()
-        modified.angular.z = self.last_nav_cmd.angular.z
-        original_linear    = self.last_nav_cmd.linear.x
-
-        if self.current_speed_ratio <= 0.01:
-            modified.linear.x = 0.0
             if abs(original_linear) > 0.01:
                 self.get_logger().warn(
-                    f" TEHLİKE! Ön mesafe={self.sensors.on_mesafe:.2f}m → DURDU",
+                    f" TEHLİKE! Ön mesafe: {self.sensorler.on_mesafe:.2f}m -> Robot acil olarak DURDURULDU!",
                     throttle_duration_sec=1.0
                 )
-        else:
-            modified.linear.x = original_linear * self.current_speed_ratio
-            self.get_logger().info(
-                f"[{self._get_zone()}] mesafe={self.sensors.on_mesafe:.2f}m "
-                f"oran={self.current_speed_ratio:.2f} "
-                f"hız={modified.linear.x:.3f}m/s",
-                throttle_duration_sec=0.5
-            )
+        else : 
+            yeni_hiz_mesaji.linear.x = original_linear * self.mevcut_hiz_orani
 
-        self.cmd_pub.publish(modified)
+            self.get_logger().info(
+                f"[{self._bolgeyi_getir()}] Mesafe: {self.sensorler.front_dist:.2f}m | "
+                f"Uygulanan Oran: %{self.mevcut_hiz_orani * 100:.0f} | "
+                f"Net Hız: {yeni_hiz_mesaji.linear.x:.3f} m/s",
+                throttle_duration_sec=0.5  # Terminali rahatlatmak için yarım saniyede bir yazdırır.
+            )
+        
+        # 4. Adım: Robotun gerçek '/cmd_vel' konusuna (topic) mesajı fırlatıyoruz.
+        self.cmd_pub(yeni_hiz_mesaji)
 
 
 def main(args=None):
